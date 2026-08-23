@@ -21,7 +21,7 @@ exit /b
 :global
 echo.
 echo Installing dependencies globally...
-python -m pip install -r requirements.txt
+python -m pip install -r components\requirements.txt
 if errorlevel 1 (
     echo Error during installation! Please check if Python is added to PATH.
     pause
@@ -33,7 +33,7 @@ echo Creating Global Launcher...
 echo Set fso = CreateObject^("Scripting.FileSystemObject"^)
 echo currentDir = fso.GetParentFolderName^(WScript.ScriptFullName^)
 echo Set WshShell = CreateObject^("WScript.Shell"^)
-echo WshShell.CurrentDirectory = currentDir
+echo WshShell.CurrentDirectory = currentDir ^& "\components"
 echo WshShell.Run "cmd /c pythonw telegram_manager_app.py", 0, False
 ) > "Launch App.vbs"
 goto finish
@@ -49,7 +49,7 @@ if errorlevel 1 (
 )
 echo Installing dependencies locally...
 call .\.venv\Scripts\activate.bat
-python -m pip install -r requirements.txt
+python -m pip install -r components\requirements.txt
 if errorlevel 1 (
     echo Error during installation!
     pause
@@ -61,8 +61,8 @@ echo Creating Local Launcher...
 echo Set fso = CreateObject^("Scripting.FileSystemObject"^)
 echo currentDir = fso.GetParentFolderName^(WScript.ScriptFullName^)
 echo Set WshShell = CreateObject^("WScript.Shell"^)
-echo WshShell.CurrentDirectory = currentDir
-echo WshShell.Run "cmd /c .\.venv\Scripts\pythonw.exe telegram_manager_app.py", 0, False
+echo WshShell.CurrentDirectory = currentDir ^& "\components"
+echo WshShell.Run "cmd /c ..\.venv\Scripts\pythonw.exe telegram_manager_app.py", 0, False
 ) > "Launch App.vbs"
 goto finish
 

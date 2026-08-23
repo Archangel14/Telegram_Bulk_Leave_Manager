@@ -55,7 +55,7 @@ class TelegramWorker(threading.Thread):
             elif action == 'submit_code':
                 try:
                     await self.client.sign_in(self.phone, cmd['code'], phone_code_hash=self.phone_code_hash)
-                    self.update_queue.put({'type': 'auth_success'})
+                    await self.send_auth_success()
                 except SessionPasswordNeededError:
                     self.update_queue.put({'type': '2fa_needed'})
                 except Exception as e:
@@ -64,7 +64,7 @@ class TelegramWorker(threading.Thread):
             elif action == 'submit_2fa':
                 try:
                     await self.client.sign_in(password=cmd['password'])
-                    self.update_queue.put({'type': 'auth_success'})
+                    await self.send_auth_success()
                 except Exception as e:
                     self.update_queue.put({'type': 'auth_error', 'message': str(e)})
                     
@@ -107,11 +107,16 @@ class TelegramWorker(threading.Thread):
             await self.client.connect()
             
             if await self.client.is_user_authorized():
-                self.update_queue.put({'type': 'auth_success'})
+                await self.send_auth_success()
             else:
                 self.update_queue.put({'type': 'auth_needed'})
         except Exception as e:
             self.update_queue.put({'type': 'error', 'message': f"Init error: {e}"})
+
+    async def send_auth_success(self):
+        me = await self.client.get_me()
+        name = me.username if me.username else (me.first_name or "User")
+        self.update_queue.put({'type': 'auth_success', 'user': name})
 
     async def handle_leave(self, chats_to_leave):
         total = len(chats_to_leave)
@@ -241,7 +246,7 @@ class App(ctk.CTk):
                                       fg_color="#F39C12", hover_color="#D68910", font=ctk.CTkFont(weight="bold"),
                                       text_color="black", width=250, height=40, command=self.emergency_stop)
 
-    def set_ui_state(self, state):
+    def set_ui_state(self, state, username=""):
         if state == "disconnected":
             self.status_dot.configure(text_color="#E74C3C")
             self.status_lbl.configure(text="Disconnected", text_color="gray")
@@ -259,7 +264,8 @@ class App(ctk.CTk):
             
         elif state == "connected":
             self.status_dot.configure(text_color="#2ECC71")
-            self.status_lbl.configure(text="Connected", text_color="#2ECC71")
+            display_text = f"Connected as @{username}" if username else "Connected"
+            self.status_lbl.configure(text=display_text, text_color="#2ECC71")
             self.auth_btn.configure(text="Logout", fg_color="#C21807", hover_color="#8B0000")
             self.fetch_btn.configure(state="normal")
             self.seg_button.configure(state="normal")
@@ -482,8 +488,9 @@ class App(ctk.CTk):
                 msg_type = msg['type']
                 
                 if msg_type == 'auth_success':
-                    self.set_ui_state("connected")
-                    self.log("Connected securely. Ready to fetch chats.")
+                    user = msg.get('user', '')
+                    self.set_ui_state("connected", user)
+                    self.log(f"Connected securely as @{user}. Ready to fetch chats.")
                 elif msg_type == 'auth_needed':
                     if not self.login_modal:
                         self.open_login_modal()
