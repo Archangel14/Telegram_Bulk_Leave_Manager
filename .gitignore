@@ -1,0 +1,18 @@
+# Environment Variables
+.env
+
+# Telethon Sessions
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# CSV Output
+telegram_chats_triage.csv
+
+# IDE Settings
+.vscode/
