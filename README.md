@@ -4,7 +4,7 @@
 ![Telethon](https://img.shields.io/badge/Telethon-API-blueviolet?style=for-the-badge)
 ![CustomTkinter](https://img.shields.io/badge/GUI-CustomTkinter-2ea44f?style=for-the-badge)
 
-We all know Telegram is not just for your personal chats anymore. I'm not admitting to anything, but let's just say there is a lot of "free media" to go around there. For some of these, you have to join groups and channels, then their bots tell you to join more, and then you have to join even more if one channel doesn't have every season of what you want. Now you have a lot of bots, groups, and channels **spamming you with questionable media** on a minute-by-minute basis, and someone that looks at your notification bar thinks they found out about your private time partner. Depending on the person, things might get pretty manipulative or weird.
+We all know Telegram is not just for your personal chats anymore. I'm not admitting to anything, but let's just say there is a lot of "free media" to go around there. For some of these, you have to join groups and channels, then their bots tell you to join more, and then you have to join even more if one channel doesn't have every season of what you want. Now you have a lot of bots, groups, and channels **spamming you with questionable media** on a minute-by-minute basis, and someone that looks at your notification bar thinks you have a highly questionable secret life. Depending on the person, things might get pretty manipulative or weird.
 
 Now, considering some of "you" download lots of media from some of these bots and channels, and are too lazy to leave all of them manually, I present to you: **Telegram Bulk Leave Manager**. *(Yeah, inputs are invited for new names of this thing!)* 
 
@@ -33,7 +33,7 @@ Here's what to do in case you want to use this:
 
 7. Come back to the project folder and double-click `Launch App.vbs`.
 8. Log in via the app interface with your `api_id`, `api_hash`, phone number, auth code, and 2FA password (if prompted).
-9. Select your preferred default action (this will be applied to all chats by default before you edit them) and click the **Fetch Chats** button.
+9. Select your preferred default action (this will be applied to all chats by default before you manually select what to choose and keep for each chat) and click the **Fetch Chats** button.
 10. Go through all the chats in the list, toggle the action to be made for each (KEEP or LEAVE), and confirm your execution!
 
 ---
