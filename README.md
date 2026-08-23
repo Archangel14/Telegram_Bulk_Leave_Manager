@@ -6,7 +6,7 @@
 
 We all know Telegram is not just for your personal chats anymore. I'm not admitting to anything, but let's just say there is a lot of "free media" to go around there. For some of these, you have to join groups and channels, then their bots tell you to join more, and then you have to join even more if one channel doesn't have every season of what you want. Now you have a lot of bots, groups, and channels **spamming you with questionable media** on a minute-by-minute basis, and someone that looks at your notification bar thinks you have a highly questionable secret life. Depending on the person, things might get pretty manipulative or weird.
 
-Now, considering some of "you" download lots of media from some of these bots and channels, and are too lazy to leave all of them manually, I present to you: **Telegram Bulk Leave Manager**. *(Yeah, inputs are invited for new names of this thing!)* 
+Now, considering "some of you" download lots of media from some of these bots and channels, and are too lazy to leave all of them manually after you're done, I present to you: **Telegram Bulk Leave Manager**. *(Yeah, inputs are invited for new names of this thing!)* 
 
 Its purpose is simple: remove those groups and channels you don't need anymore. The setup is kinda simple. It runs on Python, so you set up your dependencies, validate your account, and you're good to go.
 
