@@ -1,10 +1,17 @@
 import os
+import sys
 import time
 import threading
 import asyncio
 import queue
 import random
+import ctypes
 import customtkinter as ctk
+
+# Single Instance Lock
+mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "TelegramBulkLeaveManager_Mutex")
+if ctypes.windll.kernel32.GetLastError() == 183:
+    sys.exit(0)
 from dotenv import load_dotenv, set_key
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
@@ -80,7 +87,7 @@ class TelegramWorker(threading.Thread):
                 await self.handle_fetch()
 
             elif action == 'leave_chats':
-                await self.handle_leave(cmd['chats'])
+                await self.handle_leave(cmd)
                 
             elif action == 'quit':
                 if self.client:
@@ -109,14 +116,20 @@ class TelegramWorker(threading.Thread):
             
             chats = []
             for d in dialogs:
-                if d.is_group or d.is_channel:
+                if getattr(d.entity, 'bot', False):
+                    ctype = "Bot"
+                elif d.is_group or d.is_channel:
                     ctype = "Channel" if d.is_channel else "Group"
-                    chats.append({
-                        'id': d.id,
-                        'title': d.title,
-                        'type': ctype,
-                        'folders': folder_map.get(d.id, [])
-                    })
+                else:
+                    continue
+                    
+                chats.append({
+                    'id': d.id,
+                    'title': d.title,
+                    'type': ctype,
+                    'folders': folder_map.get(d.id, []),
+                    'is_creator': getattr(d.entity, 'creator', False)
+                })
                     
             self.update_queue.put({'type': 'chats_fetched', 'chats': chats})
         except Exception as e:
@@ -142,7 +155,9 @@ class TelegramWorker(threading.Thread):
         name = me.username if me.username else (me.first_name or "User")
         self.update_queue.put({'type': 'auth_success', 'user': name})
 
-    async def handle_leave(self, chats_to_leave):
+    async def handle_leave(self, cmd):
+        chats_to_leave = cmd['chats']
+        bot_action = cmd.get('bot_action', 'BLOCK & DELETE')
         total = len(chats_to_leave)
         for i, chat in enumerate(chats_to_leave, 1):
             if self.cancel_flag:
@@ -151,14 +166,24 @@ class TelegramWorker(threading.Thread):
                 
             title = chat['title']
             chat_id = chat['id']
+            ctype = chat['type']
             while True:
                 if self.cancel_flag:
                     break
                     
                 try:
-                    self.update_queue.put({'type': 'log', 'message': f"[{i}/{total}] Leaving '{title}'..."})
-                    await self.client.delete_dialog(chat_id)
-                    self.update_queue.put({'type': 'log', 'message': f"  ✓ Successfully left."})
+                    if ctype == "Bot":
+                        self.update_queue.put({'type': 'log', 'message': f"[{i}/{total}] Processing Bot '{title}'..."})
+                        if bot_action == 'BLOCK & DELETE':
+                            from telethon.tl.functions.contacts import BlockRequest
+                            await self.client(BlockRequest(id=chat_id))
+                            self.update_queue.put({'type': 'log', 'message': f"  ✓ Bot blocked."})
+                        await self.client.delete_dialog(chat_id)
+                        self.update_queue.put({'type': 'log', 'message': f"  ✓ History deleted."})
+                    else:
+                        self.update_queue.put({'type': 'log', 'message': f"[{i}/{total}] Leaving '{title}'..."})
+                        await self.client.delete_dialog(chat_id)
+                        self.update_queue.put({'type': 'log', 'message': f"  ✓ Successfully left."})
                     break
                 except FloodWaitError as e:
                     wait_time = e.seconds + 10
@@ -185,6 +210,7 @@ class App(ctk.CTk):
         super().__init__()
         self.title("Telegram Bulk Leave Manager")
         self.geometry("900x750")
+        self.minsize(700, 500)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         
@@ -243,6 +269,7 @@ class App(ctk.CTk):
         self.fetch_btn = ctk.CTkButton(ctrl_frame, text="Fetch Chats", width=120, command=self.do_fetch)
         self.fetch_btn.pack(side="right", padx=5)
 
+
         # SCROLLABLE TABLE
         self.scroll_frame = ctk.CTkScrollableFrame(self, label_text="Channels & Groups")
         self.scroll_frame.pack(fill="both", expand=True, padx=25, pady=5)
@@ -268,10 +295,17 @@ class App(ctk.CTk):
         self.btn_frame = ctk.CTkFrame(bottom_frame, fg_color="transparent")
         self.btn_frame.pack(pady=5)
         
+        lbl = ctk.CTkLabel(self.btn_frame, text="Action for Bots:", text_color="gray", font=ctk.CTkFont(weight="bold"))
+        lbl.pack(side="left", padx=5)
+        
+        self.bot_action_var = ctk.StringVar(value="BLOCK & DELETE")
+        self.bot_seg_button = ctk.CTkSegmentedButton(self.btn_frame, values=["JUST DELETE", "BLOCK & DELETE"], variable=self.bot_action_var)
+        self.bot_seg_button.pack(side="left", padx=(0, 20))
+        
         self.exec_btn = ctk.CTkButton(self.btn_frame, text="Confirm & Execute Removal", 
                                       fg_color="#C21807", hover_color="#8B0000", font=ctk.CTkFont(weight="bold"),
                                       width=250, height=40, command=self.confirm_execution)
-        self.exec_btn.pack()
+        self.exec_btn.pack(side="left")
         
         self.stop_btn = ctk.CTkButton(self.btn_frame, text="EMERGENCY STOP", 
                                       fg_color="#F39C12", hover_color="#D68910", font=ctk.CTkFont(weight="bold"),
@@ -288,6 +322,7 @@ class App(ctk.CTk):
             self.auth_btn.configure(text="Login", fg_color=["#3B8ED0", "#1F6AA5"], hover_color=["#36719F", "#144870"])
             self.fetch_btn.configure(state="disabled")
             self.seg_button.configure(state="disabled")
+            self.bot_seg_button.configure(state="disabled")
             self.folder_switch.configure(state="disabled")
             self.search_entry.configure(state="disabled")
             self.exec_btn.configure(state="disabled")
@@ -305,6 +340,7 @@ class App(ctk.CTk):
             self.auth_btn.configure(text="Logout", fg_color="#C21807", hover_color="#8B0000")
             self.fetch_btn.configure(state="normal")
             self.seg_button.configure(state="normal")
+            self.bot_seg_button.configure(state="normal")
             self.folder_switch.configure(state="normal")
             self.search_entry.configure(state="normal")
             if self.login_modal:
@@ -317,9 +353,24 @@ class App(ctk.CTk):
 
     def handle_auth_click(self):
         if self.auth_btn.cget("text") == "Logout":
-            self.set_ui_state("disconnected")
-            self.log("Logging out and destroying session...")
-            self.command_queue.put({'action': 'logout'})
+            dialog = ctk.CTkToplevel(self)
+            dialog.title("Confirm Logout")
+            dialog.geometry("300x150")
+            dialog.attributes("-topmost", True)
+            dialog.grab_set()
+            dialog.focus()
+            
+            lbl = ctk.CTkLabel(dialog, text="Are you sure you want to logout?\nYou will need your phone to log back in.")
+            lbl.pack(pady=20, padx=20)
+            
+            def confirm():
+                dialog.destroy()
+                self.set_ui_state("disconnected")
+                self.log("Logging out and destroying session...")
+                self.command_queue.put({'action': 'logout'})
+                
+            btn = ctk.CTkButton(dialog, text="Logout", fg_color="#C21807", hover_color="#8B0000", command=confirm)
+            btn.pack()
         else:
             self.open_login_modal()
 
@@ -332,6 +383,8 @@ class App(ctk.CTk):
         self.login_modal.geometry("420x520")
         self.login_modal.attributes("-topmost", True)
         self.login_modal.resizable(False, False)
+        self.login_modal.grab_set()
+        self.login_modal.focus()
         
         self.modal_container = ctk.CTkFrame(self.login_modal, fg_color="transparent")
         self.modal_container.pack(fill="both", expand=True, padx=30, pady=30)
@@ -423,7 +476,9 @@ class App(ctk.CTk):
         for chat in self.chats:
             chat_id = chat['id']
             if chat_id in self.chat_vars:
-                if protect and chat.get('folders'):
+                if chat.get('is_creator'):
+                    self.chat_vars[chat_id].set("KEEP")
+                elif protect and chat.get('folders'):
                     self.chat_vars[chat_id].set("KEEP")
                 else:
                     self.chat_vars[chat_id].set(default_val)
@@ -441,7 +496,7 @@ class App(ctk.CTk):
         self.logbox.delete("0.0", "end")
         self.stop_btn.pack_forget()
         self.refresh_btn.pack_forget()
-        self.exec_btn.pack()
+        self.exec_btn.pack(side="left")
 
     def filter_chats(self, event=None):
         if self.search_job:
@@ -473,15 +528,21 @@ class App(ctk.CTk):
             frame = ctk.CTkFrame(self.scroll_frame, fg_color=bg_color, corner_radius=5)
             frame.pack(fill="x", padx=10, pady=2)
             
-            # Format text lengths to prevent pushing layout
+            is_creator = chat.get('is_creator', False)
+            
             title_text = chat['title']
-            if len(title_text) > 45:
-                title_text = title_text[:42] + "..."
+            if len(title_text) > 40:
+                title_text = title_text[:37] + "..."
                 
-            title_lbl = ctk.CTkLabel(frame, text=title_text, font=ctk.CTkFont(weight="bold"), width=350, anchor="w")
+            title_color = "gray" if is_creator else ("#D3D3D3" if ctk.get_appearance_mode() == "Dark" else "black")
+            title_lbl = ctk.CTkLabel(frame, text=title_text, font=ctk.CTkFont(weight="bold"), text_color=title_color, width=330, anchor="w")
             title_lbl.pack(side="left", padx=(10, 5), pady=4)
             
-            type_lbl = ctk.CTkLabel(frame, text=f"({chat['type']})", text_color="gray", width=80, anchor="w")
+            type_text = f"({chat['type']})"
+            if is_creator:
+                type_text = f"👑 {type_text}"
+                
+            type_lbl = ctk.CTkLabel(frame, text=type_text, text_color="gray", width=90, anchor="w")
             type_lbl.pack(side="left", padx=5, pady=4)
             
             if chat.get('folders'):
@@ -496,11 +557,15 @@ class App(ctk.CTk):
             
             if chat['id'] not in self.chat_vars:
                 default_val = self.default_action_var.get().split(" ")[0]
-                if self.protect_folders_var.get() and chat.get('folders'):
+                if is_creator:
+                    default_val = "KEEP"
+                elif self.protect_folders_var.get() and chat.get('folders'):
                     default_val = "KEEP"
                 self.chat_vars[chat['id']] = ctk.StringVar(value=default_val)
                 
             switch = ctk.CTkSegmentedButton(frame, values=["LEAVE", "KEEP"], variable=self.chat_vars[chat['id']])
+            if is_creator:
+                switch.configure(state="disabled")
             switch.pack(side="right", padx=10, pady=4)
             
         self.render_index = end_idx
@@ -518,10 +583,26 @@ class App(ctk.CTk):
             self.log("\nNo chats selected to leave! Aborting.")
             return
             
+        if len(chats_to_leave) > 500:
+            err_dialog = ctk.CTkToplevel(self)
+            err_dialog.title("Safety Limit Reached")
+            err_dialog.geometry("450x150")
+            err_dialog.attributes("-topmost", True)
+            err_dialog.grab_set()
+            err_dialog.focus()
+            
+            lbl = ctk.CTkLabel(err_dialog, text=f"To protect your Telegram account from anti-spam bans,\nyou can only leave a maximum of 500 chats per execution.\n\nYou selected {len(chats_to_leave)}. Please KEEP more chats.", font=ctk.CTkFont(weight="bold"))
+            lbl.pack(pady=20, padx=20)
+            btn = ctk.CTkButton(err_dialog, text="Understood", command=err_dialog.destroy)
+            btn.pack()
+            return
+            
         dialog = ctk.CTkToplevel(self)
         dialog.title("Confirm Removal")
         dialog.geometry("450x200")
         dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.focus()
         
         lbl = ctk.CTkLabel(dialog, text=f"WARNING: You are about to permanently leave {len(chats_to_leave)} chats.\n\nAre you absolutely sure you want to proceed?", font=ctk.CTkFont(weight="bold"))
         lbl.pack(pady=40, padx=20)
@@ -530,14 +611,15 @@ class App(ctk.CTk):
             dialog.destroy()
             # UI Swap for Execution
             self.exec_btn.pack_forget()
-            self.stop_btn.pack()
+            self.stop_btn.pack(side="left")
             self.fetch_btn.configure(state="disabled")
             self.seg_button.configure(state="disabled")
+            self.bot_seg_button.configure(state="disabled")
             self.folder_switch.configure(state="disabled")
             self.log("\nStarting removal process...")
             self.worker.cancel_flag = False
             self.start_timer()
-            self.command_queue.put({'action': 'leave_chats', 'chats': chats_to_leave})
+            self.command_queue.put({'action': 'leave_chats', 'chats': chats_to_leave, 'bot_action': self.bot_action_var.get()})
             
         btn = ctk.CTkButton(dialog, text="Yes, Execute Removal", fg_color="#C21807", hover_color="#8B0000", height=35, command=execute)
         btn.pack()
@@ -566,9 +648,10 @@ class App(ctk.CTk):
         self.stop_timer()
         self.stop_btn.pack_forget()
         self.stop_btn.configure(state="normal", text="EMERGENCY STOP")
-        self.refresh_btn.pack()
+        self.refresh_btn.pack(side="left")
         self.fetch_btn.configure(state="normal")
         self.seg_button.configure(state="normal")
+        self.bot_seg_button.configure(state="normal")
         self.folder_switch.configure(state="normal")
 
     def log(self, msg):
