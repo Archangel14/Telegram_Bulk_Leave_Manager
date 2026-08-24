@@ -77,18 +77,7 @@ class TelegramWorker(threading.Thread):
                     self.update_queue.put({'type': 'error', 'message': str(e)})
                     
             elif action == 'fetch_chats':
-                try:
-                    chats = []
-                    async for dialog in self.client.iter_dialogs():
-                        if dialog.is_channel or dialog.is_group:
-                            chats.append({
-                                'id': dialog.entity.id,
-                                'title': dialog.title,
-                                'type': 'Supergroup' if getattr(dialog.entity, 'megagroup', False) else ('Channel' if dialog.is_channel else 'Group')
-                            })
-                    self.update_queue.put({'type': 'chats_fetched', 'chats': chats})
-                except Exception as e:
-                    self.update_queue.put({'type': 'error', 'message': str(e)})
+                await self.handle_fetch()
 
             elif action == 'leave_chats':
                 await self.handle_leave(cmd['chats'])
@@ -97,6 +86,41 @@ class TelegramWorker(threading.Thread):
                 if self.client:
                     await self.client.disconnect()
                 break
+
+    async def handle_fetch(self):
+        try:
+            self.update_queue.put({'type': 'log', 'message': "Fetching dialogs (this might take a moment)..."})
+            dialogs = await self.client.get_dialogs()
+            
+            folder_map = {}
+            try:
+                from telethon.tl.functions.messages import GetDialogFiltersRequest
+                import telethon.utils
+                filters = await self.client(GetDialogFiltersRequest())
+                for f in filters.filters:
+                    if hasattr(f, 'title') and hasattr(f, 'include_peers'):
+                        for peer in f.include_peers:
+                            peer_id = telethon.utils.get_peer_id(peer)
+                            if peer_id not in folder_map:
+                                folder_map[peer_id] = []
+                            folder_map[peer_id].append(f.title)
+            except Exception as e:
+                self.update_queue.put({'type': 'log', 'message': f"Note: Could not fetch folders ({e})"})
+            
+            chats = []
+            for d in dialogs:
+                if d.is_group or d.is_channel:
+                    ctype = "Channel" if d.is_channel else "Group"
+                    chats.append({
+                        'id': d.id,
+                        'title': d.title,
+                        'type': ctype,
+                        'folders': folder_map.get(d.id, [])
+                    })
+                    
+            self.update_queue.put({'type': 'chats_fetched', 'chats': chats})
+        except Exception as e:
+            self.update_queue.put({'type': 'error', 'message': f"Fetch error: {str(e)}"})
 
     async def init_client(self, api_id, api_hash):
         try:
@@ -201,12 +225,16 @@ class App(ctk.CTk):
         ctrl_frame.pack(fill="x", padx=20, pady=10)
         
         # Default action set to KEEP
-        self.default_action_var = ctk.StringVar(value="KEEP")
+        self.default_action_var = ctk.StringVar(value="KEEP ALL")
         self.seg_button = ctk.CTkSegmentedButton(ctrl_frame, values=["LEAVE ALL", "KEEP ALL"], 
-                                                 command=self.change_default, 
+                                                 command=self.update_all, 
                                                  variable=self.default_action_var)
         self.seg_button.pack(side="left", padx=5)
         self.seg_button.set("KEEP ALL")
+        
+        self.protect_folders_var = ctk.BooleanVar(value=True)
+        self.folder_switch = ctk.CTkSwitch(ctrl_frame, text="Protect folders", variable=self.protect_folders_var, command=self.update_all)
+        self.folder_switch.pack(side="left", padx=10)
         
         self.search_entry = ctk.CTkEntry(ctrl_frame, placeholder_text="Search chats...", width=250)
         self.search_entry.pack(side="left", padx=20)
@@ -260,6 +288,7 @@ class App(ctk.CTk):
             self.auth_btn.configure(text="Login", fg_color=["#3B8ED0", "#1F6AA5"], hover_color=["#36719F", "#144870"])
             self.fetch_btn.configure(state="disabled")
             self.seg_button.configure(state="disabled")
+            self.folder_switch.configure(state="disabled")
             self.search_entry.configure(state="disabled")
             self.exec_btn.configure(state="disabled")
             for widget in self.scroll_frame.winfo_children():
@@ -276,6 +305,7 @@ class App(ctk.CTk):
             self.auth_btn.configure(text="Logout", fg_color="#C21807", hover_color="#8B0000")
             self.fetch_btn.configure(state="normal")
             self.seg_button.configure(state="normal")
+            self.folder_switch.configure(state="normal")
             self.search_entry.configure(state="normal")
             if self.login_modal:
                 self.login_modal.destroy()
@@ -386,10 +416,17 @@ class App(ctk.CTk):
         elif self.auth_state == "2fa":
             self.command_queue.put({'action': 'submit_2fa', 'password': val})
 
-    def change_default(self, value):
-        new_val = value.split(" ")[0]
-        for var in self.chat_vars.values():
-            var.set(new_val)
+    def update_all(self, *args):
+        default_val = self.default_action_var.get().split(" ")[0]
+        protect = self.protect_folders_var.get()
+        
+        for chat in self.chats:
+            chat_id = chat['id']
+            if chat_id in self.chat_vars:
+                if protect and chat.get('folders'):
+                    self.chat_vars[chat_id].set("KEEP")
+                else:
+                    self.chat_vars[chat_id].set(default_val)
 
     def do_fetch(self):
         self.reset_dashboard()
@@ -436,11 +473,22 @@ class App(ctk.CTk):
             frame = ctk.CTkFrame(self.scroll_frame, fg_color=bg_color, corner_radius=5)
             frame.pack(fill="x", padx=10, pady=2)
             
-            lbl = ctk.CTkLabel(frame, text=f"{chat['title']} ({chat['type']})")
-            lbl.pack(side="left", padx=10, pady=4)
+            title_lbl = ctk.CTkLabel(frame, text=chat['title'], font=ctk.CTkFont(weight="bold"))
+            title_lbl.pack(side="left", padx=(10, 5), pady=4)
+            
+            type_lbl = ctk.CTkLabel(frame, text=f"({chat['type']})", text_color="gray")
+            type_lbl.pack(side="left", padx=5, pady=4)
+            
+            if chat.get('folders'):
+                folder_str = ", ".join(chat['folders'])
+                folder_lbl = ctk.CTkLabel(frame, text=f"📁 [{folder_str}]", text_color="#F1C40F")
+                folder_lbl.pack(side="left", padx=5, pady=4)
             
             if chat['id'] not in self.chat_vars:
-                self.chat_vars[chat['id']] = ctk.StringVar(value=self.default_action_var.get().split(" ")[0])
+                default_val = self.default_action_var.get().split(" ")[0]
+                if self.protect_folders_var.get() and chat.get('folders'):
+                    default_val = "KEEP"
+                self.chat_vars[chat['id']] = ctk.StringVar(value=default_val)
                 
             switch = ctk.CTkSegmentedButton(frame, values=["LEAVE", "KEEP"], variable=self.chat_vars[chat['id']])
             switch.pack(side="right", padx=10, pady=4)
@@ -475,6 +523,7 @@ class App(ctk.CTk):
             self.stop_btn.pack()
             self.fetch_btn.configure(state="disabled")
             self.seg_button.configure(state="disabled")
+            self.folder_switch.configure(state="disabled")
             self.log("\nStarting removal process...")
             self.worker.cancel_flag = False
             self.start_timer()
@@ -510,6 +559,7 @@ class App(ctk.CTk):
         self.refresh_btn.pack()
         self.fetch_btn.configure(state="normal")
         self.seg_button.configure(state="normal")
+        self.folder_switch.configure(state="normal")
 
     def log(self, msg):
         self.logbox.insert("end", msg + "\n")
