@@ -15,6 +15,9 @@ if ctypes.windll.kernel32.GetLastError() == 183:
 from dotenv import load_dotenv, set_key
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
+from telethon.tl.functions.contacts import BlockRequest
+from telethon.tl.functions.messages import GetDialogFiltersRequest
+import telethon.utils
 
 # Config
 ENV_FILE = '.env'
@@ -101,8 +104,6 @@ class TelegramWorker(threading.Thread):
             
             folder_map = {}
             try:
-                from telethon.tl.functions.messages import GetDialogFiltersRequest
-                import telethon.utils
                 filters = await self.client(GetDialogFiltersRequest())
                 for f in filters.filters:
                     if hasattr(f, 'title') and hasattr(f, 'include_peers'):
@@ -175,7 +176,6 @@ class TelegramWorker(threading.Thread):
                     if ctype == "Bot":
                         self.update_queue.put({'type': 'log', 'message': f"[{i}/{total}] Processing Bot '{title}'..."})
                         if bot_action == 'BLOCK & DELETE':
-                            from telethon.tl.functions.contacts import BlockRequest
                             await self.client(BlockRequest(id=chat_id))
                             self.update_queue.put({'type': 'log', 'message': f"  ✓ Bot blocked."})
                         await self.client.delete_dialog(chat_id)
@@ -497,6 +497,12 @@ class App(ctk.CTk):
         self.stop_btn.pack_forget()
         self.refresh_btn.pack_forget()
         self.exec_btn.pack(side="left")
+        
+        self.chats = []
+        self.filtered_chats = []
+        self.chat_vars = {}
+        for widget in self.scroll_frame.winfo_children():
+            widget.destroy()
 
     def filter_chats(self, event=None):
         if self.search_job:
@@ -702,6 +708,9 @@ class App(ctk.CTk):
                     self.finish_execution()
         except queue.Empty:
             pass
+        except Exception as e:
+            print(f"UI Queue Error: {e}")
+            
         self.after(100, self.check_queue)
 
     def on_closing(self):
