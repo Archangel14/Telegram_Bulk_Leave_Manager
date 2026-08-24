@@ -172,6 +172,9 @@ class App(ctk.CTk):
         self.login_modal = None
         self.timer_running = False
         self.start_time = 0
+        self.search_job = None
+        self.render_job = None
+        self.render_index = 0
         
         self.worker = TelegramWorker(self.command_queue, self.update_queue)
         self.worker.start()
@@ -246,6 +249,10 @@ class App(ctk.CTk):
                                       fg_color="#F39C12", hover_color="#D68910", font=ctk.CTkFont(weight="bold"),
                                       text_color="black", width=250, height=40, command=self.emergency_stop)
 
+        self.refresh_btn = ctk.CTkButton(self.btn_frame, text="Finish & Refresh", 
+                                      fg_color="#2ECC71", hover_color="#27AE60", font=ctk.CTkFont(weight="bold"),
+                                      text_color="black", width=250, height=40, command=self.do_fetch)
+
     def set_ui_state(self, state, username=""):
         if state == "disconnected":
             self.status_dot.configure(text_color="#E74C3C")
@@ -260,7 +267,7 @@ class App(ctk.CTk):
             self.chats = []
             self.filtered_chats = []
             self.chat_vars = {}
-            self.progress.set(0)
+            self.reset_dashboard()
             
         elif state == "connected":
             self.status_dot.configure(text_color="#2ECC71")
@@ -385,35 +392,67 @@ class App(ctk.CTk):
             var.set(new_val)
 
     def do_fetch(self):
+        self.reset_dashboard()
         self.fetch_btn.configure(state="disabled")
         self.log("\nFetching chats...")
         self.command_queue.put({'action': 'fetch_chats'})
+        
+    def reset_dashboard(self):
+        self.progress.set(0)
+        self.time_lbl.configure(text="Elapsed: 00:00")
+        self.start_time = 0
+        self.logbox.delete("0.0", "end")
+        self.stop_btn.pack_forget()
+        self.refresh_btn.pack_forget()
+        self.exec_btn.pack()
 
     def filter_chats(self, event=None):
+        if self.search_job:
+            self.after_cancel(self.search_job)
+        self.search_job = self.after(300, self._perform_filter)
+
+    def _perform_filter(self):
         query = self.search_entry.get().lower()
         self.filtered_chats = [c for c in self.chats if query in c['title'].lower()]
         self.render_chats()
 
     def render_chats(self):
+        if self.render_job:
+            self.after_cancel(self.render_job)
+            
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
             
-        for chat in self.filtered_chats:
-            frame = ctk.CTkFrame(self.scroll_frame, fg_color="transparent")
+        self.render_index = 0
+        self.render_chunk()
+
+    def render_chunk(self):
+        chunk_size = 40
+        end_idx = min(self.render_index + chunk_size, len(self.filtered_chats))
+        
+        for i in range(self.render_index, end_idx):
+            chat = self.filtered_chats[i]
+            bg_color = "transparent" if i % 2 == 0 else ("#d9d9d9", "#3b3b3b")
+            frame = ctk.CTkFrame(self.scroll_frame, fg_color=bg_color, corner_radius=5)
             frame.pack(fill="x", padx=10, pady=2)
             
             lbl = ctk.CTkLabel(frame, text=f"{chat['title']} ({chat['type']})")
-            lbl.pack(side="left", padx=10, pady=2)
+            lbl.pack(side="left", padx=10, pady=4)
             
             if chat['id'] not in self.chat_vars:
                 self.chat_vars[chat['id']] = ctk.StringVar(value=self.default_action_var.get().split(" ")[0])
                 
             switch = ctk.CTkSegmentedButton(frame, values=["LEAVE", "KEEP"], variable=self.chat_vars[chat['id']])
-            switch.pack(side="right", padx=10, pady=2)
+            switch.pack(side="right", padx=10, pady=4)
             
-        self.exec_btn.configure(state="normal")
-        self.fetch_btn.configure(state="normal")
-        self.log(f"Displaying {len(self.filtered_chats)} chats.")
+        self.render_index = end_idx
+        if self.render_index < len(self.filtered_chats):
+            self.render_job = self.after(15, self.render_chunk)
+        else:
+            self.render_job = None
+            self.exec_btn.configure(state="normal")
+            self.fetch_btn.configure(state="normal")
+            self.log(f"Displaying {len(self.filtered_chats)} chats.")
 
     def confirm_execution(self):
         chats_to_leave = [c for c in self.chats if self.chat_vars[c['id']].get() == 'LEAVE']
@@ -436,11 +475,6 @@ class App(ctk.CTk):
             self.stop_btn.pack()
             self.fetch_btn.configure(state="disabled")
             self.seg_button.configure(state="disabled")
-            for w in self.scroll_frame.winfo_children():
-                for child in w.winfo_children():
-                    if isinstance(child, ctk.CTkSegmentedButton):
-                        child.configure(state="disabled")
-                        
             self.log("\nStarting removal process...")
             self.worker.cancel_flag = False
             self.start_timer()
@@ -473,7 +507,7 @@ class App(ctk.CTk):
         self.stop_timer()
         self.stop_btn.pack_forget()
         self.stop_btn.configure(state="normal", text="EMERGENCY STOP")
-        self.exec_btn.pack()
+        self.refresh_btn.pack()
         self.fetch_btn.configure(state="normal")
         self.seg_button.configure(state="normal")
 
