@@ -173,7 +173,7 @@ class TelegramWorker(threading.Thread):
                 
             self.update_queue.put({'type': 'progress', 'value': i / total})
             if i < total:
-                sleep_dur = random.uniform(5, 12)
+                sleep_dur = random.uniform(1.5, 3.5)
                 self.update_queue.put({'type': 'log', 'message': f"  Sleeping {sleep_dur:.1f}s...\n"})
                 await asyncio.sleep(sleep_dur)
                 
@@ -473,16 +473,26 @@ class App(ctk.CTk):
             frame = ctk.CTkFrame(self.scroll_frame, fg_color=bg_color, corner_radius=5)
             frame.pack(fill="x", padx=10, pady=2)
             
-            title_lbl = ctk.CTkLabel(frame, text=chat['title'], font=ctk.CTkFont(weight="bold"))
+            # Format text lengths to prevent pushing layout
+            title_text = chat['title']
+            if len(title_text) > 45:
+                title_text = title_text[:42] + "..."
+                
+            title_lbl = ctk.CTkLabel(frame, text=title_text, font=ctk.CTkFont(weight="bold"), width=350, anchor="w")
             title_lbl.pack(side="left", padx=(10, 5), pady=4)
             
-            type_lbl = ctk.CTkLabel(frame, text=f"({chat['type']})", text_color="gray")
+            type_lbl = ctk.CTkLabel(frame, text=f"({chat['type']})", text_color="gray", width=80, anchor="w")
             type_lbl.pack(side="left", padx=5, pady=4)
             
             if chat.get('folders'):
                 folder_str = ", ".join(chat['folders'])
-                folder_lbl = ctk.CTkLabel(frame, text=f"📁 [{folder_str}]", text_color="#F1C40F")
+                if len(folder_str) > 25:
+                    folder_str = folder_str[:22] + "..."
+                folder_lbl = ctk.CTkLabel(frame, text=f"📁 [{folder_str}]", text_color="#F1C40F", width=200, anchor="w")
                 folder_lbl.pack(side="left", padx=5, pady=4)
+            else:
+                empty_lbl = ctk.CTkLabel(frame, text="", width=200)
+                empty_lbl.pack(side="left", padx=5, pady=4)
             
             if chat['id'] not in self.chat_vars:
                 default_val = self.default_action_var.get().split(" ")[0]
